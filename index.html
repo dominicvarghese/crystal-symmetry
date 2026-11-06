@@ -987,6 +987,8 @@
           <div id="insp-stage2">Invert radially through rotoinversion point (1/2, 1/2, 1/2)</div>
         </div>
 
+        <div id="insp-path" style="font-size: 11px; line-height: 1.5; color: var(--text-muted);"></div>
+
         <div class="math-grid">
           <div class="math-item" style="grid-column: span 2;">
             <div class="math-item-label">Coord Triplet (xyz)</div>
@@ -1023,12 +1025,13 @@
       <!-- Wyckoff & Atomic Site Symmetry Card (Shown on Both Tabs) -->
       <div class="card" id="card-wyckoff-sites">
         <div class="section-title" style="margin-bottom: 2px;">
-          <span>Wyckoff &amp; Site Symmetry</span>
+          <span>Atomic Orbits &amp; Site Symmetry</span>
           <span style="font-size: 10px; color: var(--accent-green);">Click row</span>
         </div>
         <div id="hdr-cell" style="font-size: 10.5px; color: var(--text-muted); font-family: monospace; background: rgba(15,23,42,0.5); padding: 3px 6px; border-radius: 4px;">
           a=5.41, b=5.41, c=5.41 Å (90°, 90°, 90°)
         </div>
+        <p style="font-size: 11px; color: var(--text-muted);">Orbit letters are local IDs, not crystallographic Wyckoff assignments.</p>
         <table class="matrix-table" id="wyckoff-site-table" style="font-family: inherit; font-size: 11px;">
           <!-- Populated dynamically -->
         </table>
@@ -1078,14 +1081,14 @@
         <div class="control-row" style="font-size: 11.5px;">
           <span>Colors / Labels:</span>
           <div style="display: flex; gap: 4px; flex: 1; max-width: 170px;">
-            <select id="sel-color-mode" style="flex: 1; padding: 3px 4px; font-size: 11px;" title="Color atoms by Element or Wyckoff Orbit">
+            <select id="sel-color-mode" style="flex: 1; padding: 3px 4px; font-size: 11px;" title="Color atoms by Element or Computed Orbit">
               <option value="element" selected>CPK</option>
-              <option value="wyckoff">Wyckoff</option>
+              <option value="wyckoff">Orbit</option>
             </select>
             <select id="sel-label-mode" style="flex: 1; padding: 3px 4px; font-size: 11px;" title="Atom text labels">
               <option value="none" selected>No Lbl</option>
               <option value="element">Elem#</option>
-              <option value="wyckoff">Wyck</option>
+              <option value="wyckoff">Orbit</option>
               <option value="frac">(x,y,z)</option>
             </select>
           </div>
@@ -1117,12 +1120,9 @@
     </aside>
   </div>
 
-  <!-- Three.js Vendor Libraries (CDN + Local Fallback so single-file download & GitHub Pages work anywhere) -->
+  <!-- Three.js vendor libraries (Internet access required for this single-file app) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-  <script src="js/vendor/three.min.js"></script>
-  <script src="js/vendor/OrbitControls.js"></script>
-  <script src="js/presets.js"></script>
 
   <!-- Embedded Crystallography & 3D Symmetry Engine (works even if only this single HTML file is downloaded!) -->
   <script>
@@ -1482,7 +1482,8 @@
     const tParLen = vecNorm(info.t_parallel_cart), wPar = info.w_parallel_frac;
     const Ainv = matInv(A), R = matMul(matMul(A, W), Ainv), tCart = matVec(A, wBest);
     const xyzRaw = formatXyzOperator(W, wRaw), xyzBest = formatXyzOperator(W, wBest);
-    const dirIndices = simplifyDirection(info.axis_frac);
+    let dirIndices = simplifyDirection(info.axis_frac);
+    if (vecDot(matVec(A, dirIndices), info.axis_cart) < 0) dirIndices = dirIndices.map(x => -x);
     const dirStr = `[${dirIndices[0]} ${dirIndices[1]} ${dirIndices[2]}]`;
     const pt = info.point_frac;
     const ptStr = `(${formatFraction(pt[0])}, ${formatFraction(pt[1])}, ${formatFraction(pt[2])})`;
@@ -1515,10 +1516,9 @@
         color = ({ 2: "#eab308", 3: "#22c55e", 4: "#3b82f6", 6: "#06b6d4" })[n] || "#3b82f6";
       } else {
         opType = "screw";
-        const axisCartVec = matVec(A, dirIndices);
-        const pitchRatio = Math.abs(vecDot(info.t_parallel_cart, axisCartVec) / vecDot(axisCartVec, axisCartVec));
-        let m = Math.max(1, Math.round(pitchRatio * n) % n) || 1;
-        if (vecDot(info.t_parallel_cart, info.axis_cart) < -1e-4 && m < n - m) m = n - m;
+        const axisCartVec = matVec(A, info.axis_frac);
+        const pitchRatio = vecDot(info.t_parallel_cart, axisCartVec) / vecDot(axisCartVec, axisCartVec);
+        const m = ((Math.round(pitchRatio * n) % n) + n) % n;
         category = `${n}_${m} Screw Axis`; symbol = `${n}_${m}`;
         const wParStr = `(${formatFraction(wPar[0])}, ${formatFraction(wPar[1])}, ${formatFraction(wPar[2])})`;
         label = `${n}_${m} Screw (${info.angle_deg.toFixed(0)}° + ${wParStr}) along ${dirStr} at ${ptStr}`;
@@ -1592,6 +1592,37 @@
     return list;
   }
 
+  function validatedAtomMapping(A, atoms, W, w, symprec) {
+    if (!atoms.length || W.flat().some(x => !Number.isFinite(x)) || w.some(x => !Number.isFinite(x))) return null;
+    const R = matMul(matMul(A, W), matInv(A));
+    const RtR = matMul(matTranspose(R), R);
+    if (RtR.some((row, i) => row.some((x, j) => Math.abs(x - (i === j ? 1 : 0)) > 1e-6))) return null;
+    // Match every atom to a distinct atom of the same species, within the requested tolerance.
+    const edges = [];
+    for (const a of atoms) {
+      const f = vecAdd(matVec(W, a.frac), w);
+      const candidates = [];
+      atoms.forEach((b, j) => {
+        if (a.element === b.element && vecNorm(matVec(A, vecSub(f, b.frac).map(d => d - Math.round(d)))) <= symprec) candidates.push(j);
+      });
+      if (!candidates.length) return null;
+      edges.push(candidates);
+    }
+    const owner = new Array(atoms.length).fill(-1);
+    function assign(i, visited) {
+      for (const j of edges[i]) {
+        if (visited.has(j)) continue;
+        visited.add(j);
+        if (owner[j] < 0 || assign(owner[j], visited)) { owner[j] = i; return true; }
+      }
+      return false;
+    }
+    for (let i = 0; i < atoms.length; i++) if (!assign(i, new Set())) return null;
+    const mapping = new Array(atoms.length);
+    owner.forEach((i, j) => { mapping[i] = j; });
+    return mapping;
+  }
+
   function detectSymmetryOperations(A, primaryAtoms, symprec = 0.02) {
     const Ainv = matInv(A);
     const validW = [];
@@ -1600,7 +1631,7 @@
       const RtR = matMul(matTranspose(R), R);
       let err = 0;
       for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) err = Math.max(err, Math.abs(RtR[i][j] - (i === j ? 1 : 0)));
-      if (err < 1e-2) validW.push(W);
+      if (err < 1e-6) validW.push(W);
     }
     const byElem = {};
     primaryAtoms.forEach((a, idx) => { (byElem[a.element] = byElem[a.element] || []).push(idx); });
@@ -1615,49 +1646,14 @@
       for (const targetIdx of pivotGroup) {
         const wCand = vecSub(primaryAtoms[targetIdx].frac, Wx0).map(mod1);
         if (acceptedTranslations.some(wPrev => vecNorm(matVec(A, vecSub(wCand, wPrev).map(d => d - Math.round(d)))) < symprec)) continue;
-        let allMatched = true;
-        const mapping = new Array(primaryAtoms.length);
-        for (let i = 0; i < primaryAtoms.length; i++) {
-          const ai = primaryAtoms[i];
-          const fNew = vecAdd(matVec(W, ai.frac), wCand).map(mod1);
-          let foundJ = -1, bestDist = symprec;
-          for (const j of byElem[ai.element]) {
-            const dCart = vecNorm(matVec(A, vecSub(fNew, primaryAtoms[j].frac).map(d => d - Math.round(d))));
-            if (dCart <= bestDist) { bestDist = dCart; foundJ = j; }
-          }
-          if (foundJ < 0) { allMatched = false; break; }
-          mapping[i] = foundJ;
-        }
-        if (allMatched) {
+        const mapping = validatedAtomMapping(A, primaryAtoms, W, wCand, symprec);
+        if (mapping) {
           acceptedTranslations.push(wCand);
           const opData = classifySymmetryOperation(opIdx++, W, wCand, A);
           opData.atom_mapping = mapping;
           operations.push(opData);
         }
       }
-    }
-    if (operations.length <= 2 && validW.length > 2 && symprec < 0.12) {
-      const nonHAtoms = primaryAtoms.filter(a => a.element !== "H");
-      if (nonHAtoms.length >= 2 && nonHAtoms.length < primaryAtoms.length) {
-        const heavyOps = detectSymmetryOperations(A, nonHAtoms, Math.max(symprec, 0.08));
-        if (heavyOps.length > operations.length) {
-          return heavyOps.map((hop, idx) => {
-            hop.index = idx + 1;
-            hop.atom_mapping = primaryAtoms.map((ai, i) => {
-              const fNew = vecAdd(matVec(hop.W, ai.frac), hop.w_raw).map(mod1);
-              let bestJ = i, bestD = 1e9;
-              for (const j of byElem[ai.element]) {
-                const dCart = vecNorm(matVec(A, vecSub(fNew, primaryAtoms[j].frac).map(d => d - Math.round(d))));
-                if (dCart < bestD) { bestD = dCart; bestJ = j; }
-              }
-              return bestJ;
-            });
-            return hop;
-          });
-        }
-      }
-      const relaxedOps = detectSymmetryOperations(A, primaryAtoms, 0.12);
-      if (relaxedOps.length > operations.length) return relaxedOps;
     }
     if (operations.length === 0) {
       const idOp = classifySymmetryOperation(1, [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [0, 0, 0], A);
@@ -1686,6 +1682,8 @@
   }
 
   function buildCrystalDataset({ name, description = "", cellRows, rawAtoms, spacegroupSymbol = "", spacegroupNumber = 0, symprec = 0.02, explicitSymOps = [] }) {
+    if (!rawAtoms.length || rawAtoms.some(a => a.frac.length !== 3 || a.frac.some(x => !Number.isFinite(x)))) throw new Error("Structure requires finite atomic coordinates.");
+    if (!Number.isFinite(symprec) || symprec <= 0) throw new Error("Atomic tolerance must be positive.");
     const A = matTranspose(cellRows);
     const cellParams = matrixToCellParams(cellRows);
     const primaryAtoms = [];
@@ -1696,7 +1694,7 @@
       for (const p of primaryAtoms) {
         if (p.element !== item.element) continue;
         const diff = vecSub(f, p.frac).map(d => d - Math.round(d));
-        if (vecNorm(matVec(A, diff)) < 0.06) { dupAtom = { p, diff }; break; }
+        if (vecNorm(matVec(A, diff)) < Math.min(symprec, 1e-3)) { dupAtom = { p, diff }; break; }
       }
       if (dupAtom) {
         const fAvg = vecAdd(dupAtom.p.frac, vecScale(dupAtom.diff, 0.5)).map(mod1);
@@ -1712,28 +1710,16 @@
       }
     }
     const operations = detectSymmetryOperations(A, primaryAtoms, symprec);
-    if (explicitSymOps && explicitSymOps.length > operations.length) {
-      const byElem = {};
-      primaryAtoms.forEach((a, idx) => { (byElem[a.element] = byElem[a.element] || []).push(idx); });
-      for (const expOp of explicitSymOps) {
-        const wCand = expOp.w.map(mod1);
-        const already = operations.some(o =>
-          o.W.flat().join(",") === expOp.W.flat().join(",") &&
-          vecNorm(matVec(A, vecSub(wCand, o.w_raw).map(d => d - Math.round(d)))) < 0.08
-        );
-        if (!already) {
-          const opData = classifySymmetryOperation(operations.length + 1, expOp.W, wCand, A);
-          opData.atom_mapping = primaryAtoms.map((ai, i) => {
-            const fNew = vecAdd(matVec(expOp.W, ai.frac), wCand).map(mod1);
-            let bestJ = i, bestD = 1e9;
-            for (const j of byElem[ai.element]) {
-              const dCart = vecNorm(matVec(A, vecSub(fNew, primaryAtoms[j].frac).map(d => d - Math.round(d))));
-              if (dCart < bestD) { bestD = dCart; bestJ = j; }
-            }
-            return bestJ;
-          });
-          operations.push(opData);
-        }
+    for (const expOp of explicitSymOps || []) {
+      const wCand = expOp.w.map(mod1);
+      const mapping = validatedAtomMapping(A, primaryAtoms, expOp.W, wCand, symprec);
+      if (!mapping) throw new Error(`CIF symmetry operation ${formatXyzOperator(expOp.W, wCand)} does not preserve the cell and all atoms at tolerance ${symprec} Å.`);
+      const already = operations.some(o => o.W.flat().join(",") === expOp.W.flat().join(",") &&
+        vecNorm(matVec(A, vecSub(wCand, o.w_raw).map(d => d - Math.round(d)))) < symprec);
+      if (!already) {
+        const opData = classifySymmetryOperation(operations.length + 1, expOp.W, wCand, A);
+        opData.atom_mapping = mapping;
+        operations.push(opData);
       }
     }
     const parent = primaryAtoms.map((_, i) => i);
@@ -1776,7 +1762,7 @@
       name: name || formula, description: description || `Loaded structure (${formula}) with ${operations.length} symmetry operations.`,
       formula, spacegroup_symbol: spacegroupSymbol || `Detected (${operations.length} ops)`,
       spacegroup_number: spacegroupNumber || 0, cell_vectors: cellRows, cell_matrix_cols: A,
-      cell_params: cellParams, atoms: primaryAtoms, packed_atoms: packedAtoms, operations,
+      cell_params: cellParams, symprec, atoms: primaryAtoms, packed_atoms: packedAtoms, operations,
     };
   }
 
@@ -1820,8 +1806,9 @@
   }
 
   function parseCifNumber(str) {
-    if (!str) return 0;
-    return parseFloat(String(str).replace(/\([0-9]+\)/g, ""));
+    if (str === undefined || str === null) return NaN;
+    const value = String(str).replace(/^['"]|['"]$/g, "").replace(/\([0-9]+\)/g, "");
+    return value === "." || value === "?" || !value.trim() ? NaN : Number(value);
   }
 
   function parseXyzSymOpString(opStr) {
@@ -1838,20 +1825,26 @@
           W[i][axisMap[mAxis[2]]] += c;
         } else if (tok.includes("/")) {
           const [num, den] = tok.split("/").map(Number);
-          if (!isNaN(num) && !isNaN(den) && den !== 0) w[i] += num / den;
+          if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) return null;
+          w[i] += num / den;
         } else {
-          const val = parseFloat(tok);
-          if (!isNaN(val)) w[i] += val;
+          const val = Number(tok);
+          if (!Number.isFinite(val)) return null;
+          w[i] += val;
         }
       }
     }
+    if (Math.abs(Math.abs(matDet(W)) - 1) > 1e-8 || W.flat().some(x => !Number.isInteger(x))) return null;
     return { W, w };
   }
 
   function tokenizeCifLine(line) {
     const tokens = [], re = /'([^']*)'|"([^"]*)"|(\S+)/g;
     let m;
-    while ((m = re.exec(line)) !== null) tokens.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+    while ((m = re.exec(line)) !== null) {
+      if (m[3] && m[3].startsWith("#")) break;
+      tokens.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+    }
     return tokens;
   }
 
@@ -1870,16 +1863,16 @@
 
   function parseCIF(text, filename = "structure.cif", symprec = 0.02, overrideMeta = null) {
     const rawLines = text.split(/\r?\n/);
-    let a = 5, b = 5, c = 5, alpha = 90, beta = 90, gamma = 90, sgSymbol = "", sgNumber = 0;
+    let a = NaN, b = NaN, c = NaN, alpha = NaN, beta = NaN, gamma = NaN, sgSymbol = "", sgNumber = 0;
     for (const rawLine of rawLines) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#")) continue;
-      if (/^_cell_length_a(\s|$)/i.test(line)) a = parseCifNumber(line.split(/\s+/)[1]);
-      else if (/^_cell_length_b(\s|$)/i.test(line)) b = parseCifNumber(line.split(/\s+/)[1]);
-      else if (/^_cell_length_c(\s|$)/i.test(line)) c = parseCifNumber(line.split(/\s+/)[1]);
-      else if (/^_cell_angle_alpha(\s|$)/i.test(line)) alpha = parseCifNumber(line.split(/\s+/)[1]);
-      else if (/^_cell_angle_beta(\s|$)/i.test(line)) beta = parseCifNumber(line.split(/\s+/)[1]);
-      else if (/^_cell_angle_gamma(\s|$)/i.test(line)) gamma = parseCifNumber(line.split(/\s+/)[1]);
+      if (/^_cell_length_a(\s|$)/i.test(line)) a = parseCifNumber(tokenizeCifLine(line)[1]);
+      else if (/^_cell_length_b(\s|$)/i.test(line)) b = parseCifNumber(tokenizeCifLine(line)[1]);
+      else if (/^_cell_length_c(\s|$)/i.test(line)) c = parseCifNumber(tokenizeCifLine(line)[1]);
+      else if (/^_cell_angle_alpha(\s|$)/i.test(line)) alpha = parseCifNumber(tokenizeCifLine(line)[1]);
+      else if (/^_cell_angle_beta(\s|$)/i.test(line)) beta = parseCifNumber(tokenizeCifLine(line)[1]);
+      else if (/^_cell_angle_gamma(\s|$)/i.test(line)) gamma = parseCifNumber(tokenizeCifLine(line)[1]);
       else if (/^_space_group_name_h-m_alt(\s|$)/i.test(line) || /^_symmetry_space_group_name_h-m(\s|$)/i.test(line)) {
         const toks = tokenizeCifLine(line);
         if (toks.length >= 2) sgSymbol = toks.slice(1).join(" ").trim();
@@ -1905,6 +1898,7 @@
           if (hl.startsWith("_")) { headers.push(hl.split(/\s+/)[0].toLowerCase()); i++; }
           else break;
         }
+        if (!headers.length) throw new Error("CIF loop requires column headers.");
         const rows = [];
         while (i < rawLines.length) {
           const l = rawLines[i].trim();
@@ -1915,15 +1909,19 @@
             i++; continue;
           }
           if (l.toLowerCase() === "loop_" || l.startsWith("_") || l.toLowerCase().startsWith("data_")) break;
-          rows.push(tokenizeCifLine(l));
+          rows.push(...tokenizeCifLine(l));
           i++;
         }
+        if (headers.length && rows.length % headers.length !== 0) throw new Error("Incomplete CIF loop row.");
+        const loopRows = [];
+        for (let k = 0; k < rows.length; k += headers.length) loopRows.push(rows.slice(k, k + headers.length));
         const symCol = headers.findIndex(h => h.includes("symop_operation_xyz") || h.includes("equiv_pos_as_xyz"));
         if (symCol >= 0) {
-          for (const r of rows) {
+          for (const r of loopRows) {
             if (r[symCol]) {
               const p = parseXyzSymOpString(r[symCol]) || parseXyzSymOpString(r.slice(symCol).join(" "));
-              if (p) cifSymOps.push(p);
+              if (!p) throw new Error("Invalid CIF symmetry triplet.");
+              cifSymOps.push(p);
             }
           }
         }
@@ -1933,7 +1931,7 @@
         const typeCol = headers.indexOf("_atom_site_type_symbol");
         const labelCol = headers.indexOf("_atom_site_label");
         if (fxCol >= 0 && fyCol >= 0 && fzCol >= 0) {
-          for (const r of rows) {
+          for (const r of loopRows) {
             if (r.length <= Math.max(fxCol, fyCol, fzCol)) continue;
             const elem = extractElementSymbol(typeCol >= 0 ? r[typeCol] : labelCol >= 0 ? r[labelCol] : "Si");
             const fx = parseCifNumber(r[fxCol]), fy = parseCifNumber(r[fyCol]), fz = parseCifNumber(r[fzCol]);
@@ -1943,7 +1941,12 @@
       } else i++;
     }
     if (asymAtoms.length === 0) throw new Error("No _atom_site_fract_x/y/z coordinates found in CIF file.");
+    if (![a, b, c].every(x => Number.isFinite(x) && x > 0) ||
+        ![alpha, beta, gamma].every(x => Number.isFinite(x) && x > 0 && x < 180)) {
+      throw new Error("CIF requires valid cell lengths a/b/c and angles alpha/beta/gamma.");
+    }
     const cellRows = cellParamsToMatrix(a, b, c, alpha, beta, gamma);
+    if (cellRows.flat().some(x => !Number.isFinite(x)) || Math.abs(matDet(cellRows)) < 1e-8) throw new Error("Invalid or singular CIF cell.");
 
     if (cifSymOps.length === 0 && (sgSymbol || sgNumber)) {
       const normSg = sgSymbol.replace(/\s+/g, "").toLowerCase();
@@ -1982,20 +1985,25 @@
   function findInCellAtomPairs(crystalData, op) {
     const packed = crystalData.packed_atoms || crystalData.atoms;
     const pairs = [];
-    const tol = op.preserved === false ? 0.26 : 0.02;
+    const tol = op.preserved === false ? Infinity : (crystalData.symprec || 0.02);
     for (const a of packed) {
-      const fbTarget = vecAdd(matVec(op.W, a.frac), op.w);
+      const targetCart = evaluateAnimationStep(a.cart, op, 1).posFinal;
       let bestB = null, bestDiff = tol;
       for (const b of packed) {
         if (b.element !== a.element) continue;
-        const diff = vecNorm(vecSub(fbTarget, b.frac));
+        if (op.preserved === false && op.atom_mapping) {
+          const sourceId = a.primary_id === undefined ? a.id : a.primary_id;
+          const targetId = b.primary_id === undefined ? b.id : b.primary_id;
+          if (targetId !== op.atom_mapping[sourceId]) continue;
+        }
+        const diff = vecNorm(vecSub(targetCart, b.cart));
         if (diff <= bestDiff) { bestDiff = diff; bestB = b; }
       }
       if (bestB) {
         const moveDist = vecNorm(vecSub(a.cart, bestB.cart));
         const aInt = a.frac.every(x => x > 0.01 && x < 0.99) ? 1 : 0;
         const bInt = bestB.frac.every(x => x > 0.01 && x < 0.99) ? 1 : 0;
-        pairs.push({ atomA: a, atomB: bestB, moves: moveDist > 0.05, moveDist, interiorScore: aInt + bInt, fracMismatch: bestDiff });
+        pairs.push({ atomA: a, atomB: bestB, moves: moveDist > 0.05, moveDist, interiorScore: aInt + bInt, mismatchAngstrom: bestDiff });
       }
     }
     pairs.sort((p1, p2) => (p1.moves !== p2.moves ? (p1.moves ? -1 : 1) : p1.interiorScore !== p2.interiorScore ? p2.interiorScore - p1.interiorScore : p1.atomA.id - p2.atomA.id));
@@ -2349,15 +2357,20 @@
         if (bestDist > maxAtomMismatch) maxAtomMismatch = bestDist;
       }
 
-      const preserved = metricErr < 1e-2 && maxAtomMismatch <= symprec;
-      const reclass = classifySymmetryOperation(parentOp.index, W, wRaw, A);
-      reclass.atom_mapping = parentOp.atom_mapping;
+      const currentMapping = metricErr < 1e-6 ? validatedAtomMapping(A, distortedData.atoms, W, wRaw, symprec) : null;
+      const preserved = currentMapping !== null;
+      // When strain breaks the metric, A W A^-1 is an affine stretch, not a rigid rotation.
+      // Animate the original parent operation in the laboratory frame instead.
+      const reclass = metricErr < 1e-6
+        ? classifySymmetryOperation(parentOp.index, W, wRaw, A)
+        : { ...parentOp };
+      reclass.atom_mapping = currentMapping || parentOp.atom_mapping;
       reclass.preserved = preserved;
       reclass.metric_error = metricErr;
       reclass.atom_mismatch_angstrom = maxAtomMismatch;
       if (!preserved) {
-        if (metricErr >= 1e-2 && maxAtomMismatch > symprec) reclass.broken_reason = `Broken by strain (Δε=${(metricErr * 50).toFixed(1)}%) & atomic shift (Δr=${maxAtomMismatch.toFixed(2)} Å)`;
-        else if (metricErr >= 1e-2) reclass.broken_reason = `Broken by lattice strain (Δε=${(metricErr * 50).toFixed(1)}%): strained cell metric violates this ${parentOp.symbol} operation`;
+        if (metricErr >= 1e-6 && maxAtomMismatch > symprec) reclass.broken_reason = `Broken by strain (Δε=${(metricErr * 50).toFixed(1)}%) & atomic shift (Δr=${maxAtomMismatch.toFixed(2)} Å)`;
+        else if (metricErr >= 1e-6) reclass.broken_reason = `Broken by lattice strain (Δε=${(metricErr * 50).toFixed(1)}%): strained cell metric violates this ${parentOp.symbol} operation; animation shows the rigid parent operation`;
         else reclass.broken_reason = `Broken by internal order parameter: atoms miss target sites by Δr=${maxAtomMismatch.toFixed(2)} Å`;
       } else {
         reclass.broken_reason = "Preserved in distorted subgroup G_sub";
@@ -2620,7 +2633,7 @@
   global.Crystallography = {
     ELEMENT_DATA, getElementInfo, vecAdd, vecSub, vecScale, vecDot, vecCross, vecNorm, vecNormalize,
     matVec, matMul, matInv, matDet, rodriguesRotationMatrix, formatFraction, formatXyzOperator,
-    analyzeSingleRep, chooseBestLatticeShift, classifySymmetryOperation, detectSymmetryOperations,
+    analyzeSingleRep, chooseBestLatticeShift, classifySymmetryOperation, detectSymmetryOperations, validatedAtomMapping,
     buildCrystalDataset, parsePOSCAR, parseCIF, findInCellAtomPairs, findOperationsBetweenAtoms,
     identifyPointGroupSymbol, getAtomSiteSymmetry, getWyckoffOrbitsSummary, evaluateAnimationStep,
     identifyCrystalSystemAndProperties, IRREP_ORDER_PARAMETER_PRESETS, applyOrderParameterAndStrain,
@@ -2658,7 +2671,7 @@
         name: "α-Quartz SiO2 (P3_121, #152)",
         sgSymbol: "P3_121", sgNumber: 152,
         description: "Chiral trigonal structure (no mirrors, glides, or inversion centers!). Showcases a pure right-handed 3₁ helical screw axis along [001] (120° + c/3) and perpendicular 2-fold axes.",
-        cif: `_cell_length_a 4.916\n_cell_length_b 4.916\n_cell_length_c 5.405\n_cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 120\nloop_\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\nSi 0.4697 0 0.333333\nSi 0 0.4697 0.666667\nSi 0.5303 0.5303 0\nO 0.4135 0.2669 0.2142\nO 0.7331 0.1466 0.547533\nO 0.8534 0.5865 0.880867\nO 0.2669 0.4135 0.452467\nO 0.1466 0.7331 0.119133\nO 0.5865 0.8534 0.7858`
+        cif: `_cell_length_a 4.916\n_cell_length_b 4.916\n_cell_length_c 5.405\n_cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 120\nloop_\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\nSi 0.4697 0 0.333333\nSi 0 0.4697 0.666667\nSi 0.5303 0.5303 0\nO 0.4135 0.2669 0.2142\nO 0.7331 0.1466 0.547533\nO 0.8534 0.5865 0.880867\nO 0.2669 0.4135 0.7858\nO 0.1466 0.7331 0.452467\nO 0.5865 0.8534 0.119133`
       },
       baddeleyite_14: {
         name: "Baddeleyite ZrO2 (P2_1/c, #14)",
@@ -3270,10 +3283,10 @@
           const len = C.vecNorm(C.vecSub(seg.end, seg.start));
           const perp1 = this._getPerpendicularUnitVec(u);
           const perp2 = C.vecCross(u, perp1);
-          const handedSign = C.vecDot(op.t_parallel_cart, u) >= 0 ? 1 : -1;
+          const rise = C.vecDot(op.t_parallel_cart, u);
           for (let k = 0; k <= 90; k++) {
             const s = k / 90;
-            const theta = handedSign * 1.5 * 2 * Math.PI * s;
+            const theta = (op.angle_deg * Math.PI / 180) * (s * len / rise);
             const base = C.vecAdd(seg.start, C.vecScale(u, s * len));
             const offset = C.vecAdd(C.vecScale(perp1, 0.42 * Math.cos(theta)), C.vecScale(perp2, 0.42 * Math.sin(theta)));
             helixPts.push(new THREE.Vector3(...C.vecAdd(base, offset)));
@@ -3289,7 +3302,7 @@
           if (showLabels && this.settings.calloutMode === "full") {
             const pitchMid = C.vecScale(C.vecAdd(pitchStart, pitchEnd), 0.5);
             const wPar = op.w_parallel_frac;
-            const pitchLbl = this._makeTextSprite(`pitch = (${C.formatFraction(wPar[0])}, ${C.formatFraction(wPar[1])}, ${C.formatFraction(wPar[2])})`, "#6ee7b7", 0.42);
+            const pitchLbl = this._makeTextSprite(`step translation = (${C.formatFraction(wPar[0])}, ${C.formatFraction(wPar[1])}, ${C.formatFraction(wPar[2])})`, "#6ee7b7", 0.42);
             pitchLbl.position.set(...C.vecAdd(pitchMid, C.vecScale(perp1, 0.45)));
             this.symElementGroup.add(pitchLbl);
           }
@@ -3843,7 +3856,7 @@
           }
           const f = atom.frac.map(x => C.formatFraction(x)).join(", ");
           tooltipEl.innerHTML = `
-            <strong>${atom.element}#${atom.id + 1}</strong> (Wyckoff <em>${atom.wyckoff}</em>)<br/>
+            <strong>${atom.element}#${atom.id + 1}</strong> (Orbit <em>${atom.wyckoff}</em>)<br/>
             Frac: (${f})<br/>
             Cart: (${atom.cart.map(x => x.toFixed(2)).join(", ")}) Å
           `;
@@ -3860,7 +3873,7 @@
             const [a, b] = picked;
             const matched = C.findOperationsBetweenAtoms(viz.crystalData, a, b);
             if (matched.length === 0) {
-              msgEl.textContent = `No symmetry operation relates ${a.element}#${a.id + 1} to ${b.element}#${b.id + 1} (different Wyckoff orbits).`;
+              msgEl.textContent = `No symmetry operation relates ${a.element}#${a.id + 1} to ${b.element}#${b.id + 1} (different atomic orbits).`;
             } else {
               msgEl.textContent = `Found ${matched.length} symmetry operation(s) mapping ${a.element}#${a.id + 1} → ${b.element}#${b.id + 1}!`;
               renderOperationList(matched, { atomA: a, atomB: b });
@@ -3876,7 +3889,7 @@
           const fStr = a.frac.map(x => C.formatFraction(x)).join(", ");
           msgEl.style.display = "block";
           msgEl.style.color = "#34d399";
-          msgEl.innerHTML = `<strong>Site ${a.element}#${a.id + 1} (Wyckoff ${a.wyckoff})</strong> at (${fStr})<br/>Site Point Group: <strong>${siteSym.pointGroup.label}</strong> (${siteSym.operations.length} site operations, ${siteSym.neighbors.length} coordination neighbors)`;
+          msgEl.innerHTML = `<strong>Site ${a.element}#${a.id + 1} (Orbit ${a.wyckoff})</strong> at (${fStr})<br/>Site Point Group: <strong>${siteSym.pointGroup.label}</strong> (${siteSym.operations.length} site operations, ${siteSym.neighbors.length} coordination neighbors)`;
           document.getElementById("sel-jahn-scope").value = "site";
           renderFilterChips(viz.crystalData);
           applyFilterAndRenderList();
@@ -4092,7 +4105,7 @@
         let html = `
           <tr style="color: var(--text-muted); font-size: 11px; text-transform: uppercase;">
             <td>Atom</td>
-            <td>Wyckoff</td>
+            <td>Orbit / atoms</td>
             <td>Site PG</td>
             <td>Ops</td>
             <td>Action</td>
@@ -4102,7 +4115,7 @@
           html += `
             <tr style="cursor: pointer;" data-rep-atom-id="${orb.repAtom.id}">
               <td style="font-weight: 700;">${orb.element}</td>
-              <td>${orb.multiplicity}${orb.wyckoff}</td>
+              <td>${orb.wyckoff} / ${orb.multiplicity}</td>
               <td style="color: #34d399; font-weight: 700;">${orb.sitePointGroup.label}</td>
               <td>${orb.siteOpCount}</td>
               <td><button class="btn-sm" style="padding: 2px 6px; font-size: 11px;">🔬 Inspect</button></td>
@@ -4275,9 +4288,21 @@
         });
       }
 
+      function updatePairPath(op, pair) {
+        const el = document.getElementById("insp-path");
+        if (!op || !pair) { el.textContent = ""; return; }
+        const Ainv = C.matInv(viz.crystalData.cell_matrix_cols);
+        const step = C.evaluateAnimationStep(pair.atomA.cart, op, 1, "two-stage");
+        const fmt = cart => `(${C.matVec(Ainv, cart).map(x => C.formatFraction(x)).join(", ")})`;
+        el.textContent = `Fractional path: A ${fmt(pair.atomA.cart)} → Stage 1 ${fmt(step.posStage1End)} → B ${fmt(step.posFinal)}.` +
+          (op.metric_error >= 1e-6 ? " The rigid parent operation is shown; xyz and r₀ use the parent cell." : "") +
+          (op.type === "screw" ? " Rotation is about the displayed axis through r₀; a 180° turn reaches the opposite cell corner only when that axis passes through the center of that face." : "");
+      }
+
       function updatePairCounter(idx, total, pair) {
         const lbl = document.getElementById("pair-counter-label");
         const op = viz.currentOp;
+        updatePairPath(op, pair);
         if (!total || !pair) {
           lbl.textContent = "No in-cell pair";
           updateHudLegendBar(op, null);
@@ -4342,7 +4367,7 @@
           msg.style.display = "block";
           msg.style.color = "#34d399";
           if (!viz.activeSiteSym) {
-            msg.textContent = "Click any single atom in the 3D crystal (or a row in the Wyckoff table) to inspect its Site Symmetry...";
+            msg.textContent = "Click any single atom in the 3D crystal (or a row in the atomic orbit table) to inspect its Site Symmetry...";
           }
         } else if (viz.settings.pickingMode) {
           btnPick.classList.add("btn-active");
