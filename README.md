@@ -27,7 +27,7 @@ Standard crystal viewers (such as VESTA) display crystal structures but do not g
 ---
 
 ### 2. 🔬 Atomic Site-Symmetry & Coordination Shell Inspector
-* **Automatic Wyckoff & Site Point Group Table:** Identifies the exact local **Site-Symmetry Point Group** (in both Hermann-Mauguin and Schoenflies notation, e.g., `-43m (Td)`, `mmm (D2h)`, `2/m (C2h)`, `2 (C2)`, `-1 (Ci)`, `1 (C1)`) for every Wyckoff orbit in the crystal.
+* **Atomic Orbit & Site Point Group Table:** Identifies the exact local **Site-Symmetry Point Group** (in both Hermann-Mauguin and Schoenflies notation, e.g., `-43m (Td)`, `mmm (D2h)`, `2/m (C2h)`, `2 (C2)`, `-1 (Ci)`, `1 (C1)`) for every computed atomic orbit in the crystal.
 * **Single-Atom Site Explorer (`🔬 Site Sym (1 Atom)`):** Click any atom in 3D (or any row in the Wyckoff table) to isolate the stabilizer subgroup of symmetry operations passing directly through that atom, highlight its complete first-shell coordination polyhedron, and overlay all intersecting site-symmetry axes and mirror planes on that atom.
 * **Atom-to-Atom SymOp Finder (`🎯 Pair A→B (2 Atoms)`):** Click any two equivalent atoms $A$ and $B$ in the unit cell to filter the operation list to only the symmetry operations that map Atom $A$ directly onto Atom $B$.
 
@@ -80,8 +80,8 @@ Following *International Tables for Crystallography, Volume D* and Bilbao's **`M
 ## 📂 Supported File Formats & Built-in Presets
 
 * **Drag-and-Drop File Support:**
-  * **`.cif` (Crystallographic Information File):** Supports both Inorganic and Organic/Molecular crystals (with automatic special-position averaging and heavy-atom Carbon-skeleton fallback for riding-model H noise).
-  * **`POSCAR` / `CONTCAR` (VASP 4 & 5):** Automatically detects the full space-group and site-symmetry operations directly from the raw lattice vectors and atomic coordinates using an adjustable tolerance (`tol: 0.005 Å – 0.10 Å`).
+  * **`.cif` (Crystallographic Information File):** Supports both Inorganic and Organic/Molecular crystals (with symmetry expansion from explicit operations and validation against all atomic species).
+  * **`POSCAR` / `CONTCAR` (VASP 4 & 5):** Detects candidate space-group and site-symmetry operations directly from the raw lattice vectors and atomic coordinates using an adjustable tolerance (`tol: 0.005 Å – 0.10 Å`).
 * **7 Curated Built-in Presets:**
   1. **Sphalerite $\text{ZnS}$ ($F\bar{4}3m$, #216)** — $\bar{4}$ rotoinversion, $d$-glides, $2_1$ screws
   2. **Diamond $\text{Si}$ ($Fd\bar{3}m$, #227)** — $4_1/4_3$ screws, $d$-glides, $\bar{3}$ rotoinversions, $\bar{1}$ centers
@@ -95,8 +95,29 @@ Following *International Tables for Crystallography, Volume D* and Bilbao's **`M
 
 ## 🚀 Running Locally
 
-Because the application is **100% self-contained inside `index.html`**, no build step or backend server is required:
+The application code and presets are embedded in `index.html`; Three.js and OrbitControls load from jsDelivr and require Internet access. No build step or backend server is required:
 1. Clone or download `index.html` from this repository.
 2. Open `index.html` directly in any modern browser (Chrome, Firefox, Safari, Edge), or serve locally via:
    ```bash
    python3 -m http.server 8000
+
+   ```
+
+
+## Validation and interpretation
+
+Run the regression suite with Node.js 20 or newer:
+
+```bash
+node tests/symmetry.test.cjs
+```
+
+The suite checks all seven presets, symmetry group closure, species-preserving atom permutations, animation endpoints, the offset ZnS screw axis, quartz site symmetry, CIF validation, strain behavior and known tensor dimensions.
+
+Orbit letters in the UI are local identifiers, **not International Tables Wyckoff letters**. Symmetry detection uses the selected atomic tolerance for all species, including H, and a strict dimensionless cell-metric tolerance of `1e-6`. It does not refine an approximately symmetric experimental cell. Raise the atomic tolerance explicitly when appropriate; the detector no longer silently changes it.
+
+A 180° rotation about an offset screw axis can take a corner to an edge midpoint. For ZnS, the axis `(1/2, 1/4, z)` maps `(0,0,0)` to `(1,1/2,0)` before the `c/2` translation. The inspector shows the actual fractional path for the selected atom pair. Symmetry operations differing by a lattice translation can have different axis locations; the inspector displays the chosen representative.
+
+For metric-breaking strain, the animation applies the original rigid parent operation in the laboratory frame. The operation triplet and anchor then refer to the parent cell; path coordinates refer to the current cell. A displayed mismatch is a Cartesian distance in Å.
+
+See [SYMMETRY_AUDIT.md](SYMMETRY_AUDIT.md) for the fixes and remaining scientific limitations.
