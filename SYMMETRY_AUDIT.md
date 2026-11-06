@@ -28,11 +28,28 @@ The inspected unstrained operations already had correct animation endpoints. The
 
 ## Validation
 
-`node tests/symmetry.test.cjs`: 19 passing tests. These include all seven preset counts and point groups, operation closure modulo lattice translations, bijective atom mappings, endpoint equivalence to the affine operator for both animation styles and all packed atoms, the ZnS half-turn geometry, quartz site symmetry, signed screws, input rejection and strain rigidity. Known independent-component counts are checked for polarization, dielectric, piezoelectric and elastic tensors in ZnS, diamond and quartz. Every inline script is also compiled.
+`node tests/symmetry.test.cjs`: 24 passing tests. These include all seven preset counts and point groups, operation closure modulo lattice translations, bijective atom mappings, endpoint equivalence to the affine operator for both animation styles and all packed atoms, the ZnS half-turn geometry, quartz site symmetry, signed screws, input rejection and strain rigidity. Known independent-component counts are checked for polarization, dielectric, piezoelectric and elastic tensors in ZnS, diamond and quartz. Every inline script is also compiled.
 
 Expected operation counts: ZnS 96; diamond 192; rutile 16; chalcopyrite 16; quartz 6; baddeleyite 4; rubrene 16.
 
 A Chromium/Playwright smoke test also loaded every preset, selected a screw operation, inspected its coordinate path, scrubbed the timeline, aligned the camera, selected an atomic site and exercised the strain tab without JavaScript errors. The test served cached copies of the pinned Three.js/OrbitControls libraries; CDN availability was not tested.
+
+## Site-symmetry and atom-pair follow-up
+
+Independent validation with **spglib 2.8.0** agrees with all seven preset space-group numbers, all operations and all atomic site point groups. The optional `tests/reference-spglib.py` makes this comparison reproducible. For quartz, it confirms `P3_121` (#152), Si site symmetry `2`, and O site symmetry `1`.
+
+A rotation through a central atom is a valid site symmetry only if the surrounding crystal is also preserved. For quartz Si, the twofold rotation exchanges four O neighbors in two pairs; the center is fixed. A quarter-turn fixes the center but fails to map the neighbors. The UI now explains this distinction and identifies the colored motif as an artificial reference marker.
+
+Further bugs corrected:
+
+- Site-mode animation previously chose its featured neighbor independently from the inspector's atom pair. Both now use the same species-matched neighbor pair, including cycling and whole-shell animation.
+- Site membership and atom-pair matching used a fixed fractional `0.01` threshold. They now use the selected Cartesian tolerance in Å; this avoids false site axes in large cells.
+- The pair finder copied operation types and labels after changing their lattice representative. For periodic copies of the same atom, it could claim identity and fail to reach the target. It now keeps the exact integer lattice shift, reclassifies its geometry and describes whole-lattice translations correctly. Whole axial translations are not mislabeled as `2_0` or `3_0` screws.
+- Stage timing labels now distinguish single-component motion (0–100%), two-stage compound motion and simultaneous components; the 50% button no longer claims every operation is complete at halfway.
+- Broken parent operations are excluded from the equivalent-atom pair finder for a distorted crystal.
+- Site-axis direction labels now agree with the signed rotation axis, and the geometry retains the actual operation anchor rather than forcing it through rounded atom coordinates.
+
+The 24 native regression tests include quartz oxygen exchange, the failed quarter-turn counterexample, identity-only O sites, Cartesian site tolerance and exact periodic-image pair endpoints across all presets. Browser checks verify that displayed neighbor pairs match the actual actors for every quartz Si neighbor pair, that O has no nontrivial site operation, and that a periodic-copy lattice translation reaches the selected target.
 
 ## Remaining limitations and recommended next work
 

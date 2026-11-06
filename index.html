@@ -789,7 +789,7 @@
         <div class="transport-controls">
           <button class="btn-primary btn-sm" id="btn-play-pause" style="min-width: 72px;">⏸ Pause</button>
           <button class="btn-sm" id="btn-jump-0" title="Jump to initial state (0%)">0%</button>
-          <button class="btn-sm" id="btn-jump-50" title="Jump to end of Stage 1 (50%): Rotated or Reflected intermediate state">50%</button>
+          <button class="btn-sm" id="btn-jump-50" title="Jump to 50% of the animation; stage timing depends on the operation and animation style">50%</button>
           <button class="btn-sm" id="btn-jump-100" title="Jump to final transformed state (100%): After Stage 2 Invert/Slide">100%</button>
 
           <div class="timeline-container">
@@ -974,14 +974,14 @@
         </div>
 
         <div class="stage-box stage1-box">
-          <div style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; color: var(--accent-blue);">
+          <div id="insp-stage1-timing" style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; color: var(--accent-blue);">
             Stage 1 (0% → 50%)
           </div>
           <div id="insp-stage1">Rotate 90° around axis [0 0 1]</div>
         </div>
 
         <div class="stage-box stage2-box">
-          <div style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; color: var(--accent-amber);">
+          <div id="insp-stage2-timing" style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; color: var(--accent-amber);">
             Stage 2 (50% → 100%)
           </div>
           <div id="insp-stage2">Invert radially through rotoinversion point (1/2, 1/2, 1/2)</div>
@@ -1095,9 +1095,9 @@
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; margin-top: 2px;">
-          <label class="checkbox-row" style="font-size: 11px;" title="Show 4-colored chiral tetrahedron motif">
+          <label class="checkbox-row" style="font-size: 11px;" title="Artificial orientation marker showing handedness; this is not a physical atom or atomic spin">
             <input type="checkbox" id="chk-chiral-motif" checked />
-            <span>Chiral Motif</span>
+            <span>Reference Motif</span>
           </label>
           <label class="checkbox-row" style="font-size: 11px;">
             <input type="checkbox" id="chk-trajectories" checked />
@@ -1475,9 +1475,11 @@
     return { wBest: bestW, info: bestInfo };
   }
 
-  function classifySymmetryOperation(opIndex, W, wRawInput, A) {
+  function classifySymmetryOperation(opIndex, W, wRawInput, A, options = {}) {
     const wRaw = wRawInput.map(mod1);
-    const { wBest, info } = chooseBestLatticeShift(W, wRaw, A);
+    const { wBest, info } = options.preserveRepresentative
+      ? { wBest: [...wRawInput], info: analyzeSingleRep(W, wRawInput, A, options.targetFrac || [0.5, 0.5, 0.5]) }
+      : chooseBestLatticeShift(W, wRaw, A);
     const det = Math.round(matDet(W)), tr = Math.round(matTrace(W));
     const tParLen = vecNorm(info.t_parallel_cart), wPar = info.w_parallel_frac;
     const Ainv = matInv(A), R = matMul(matMul(A, W), Ainv), tCart = matVec(A, wBest);
@@ -1490,15 +1492,15 @@
 
     let opType, category, symbol, label, stage1Desc, stage2Desc, color;
     if (det === 1 && tr === 3) {
-      if (vecNorm(wRaw) < 1e-5) {
+      if (vecNorm(wBest) < 1e-5) {
         opType = "identity"; category = "Identity"; symbol = "1"; label = "Identity (1)";
         stage1Desc = "No motion (Identity operation leaves all atoms in place)";
         stage2Desc = "Complete"; color = "#94a3b8";
       } else {
-        opType = "translation"; category = "Centering Translation"; symbol = "t";
-        const wStr = `(${formatFraction(wRaw[0])}, ${formatFraction(wRaw[1])}, ${formatFraction(wRaw[2])})`;
-        label = `Centering Translation t = ${wStr}`;
-        stage1Desc = `Translate by lattice centering vector ${wStr}`;
+        opType = "translation"; category = vecNorm(wRaw) < 1e-5 ? "Lattice Translation" : "Centering Translation"; symbol = "t";
+        const wStr = `(${wBest.map(x => formatFraction(x)).join(", ")})`;
+        label = `${category} t = ${wStr}`;
+        stage1Desc = `Translate by fractional vector ${wStr}`;
         stage2Desc = "Complete"; color = "#64748b";
       }
     } else if (det === -1 && tr === -3) {
@@ -1519,9 +1521,9 @@
         const axisCartVec = matVec(A, info.axis_frac);
         const pitchRatio = vecDot(info.t_parallel_cart, axisCartVec) / vecDot(axisCartVec, axisCartVec);
         const m = ((Math.round(pitchRatio * n) % n) + n) % n;
-        category = `${n}_${m} Screw Axis`; symbol = `${n}_${m}`;
+        category = m === 0 ? "Rotation + Axial Lattice Translation" : `${n}_${m} Screw Axis`; symbol = m === 0 ? `${n}+t` : `${n}_${m}`;
         const wParStr = `(${formatFraction(wPar[0])}, ${formatFraction(wPar[1])}, ${formatFraction(wPar[2])})`;
-        label = `${n}_${m} Screw (${info.angle_deg.toFixed(0)}° + ${wParStr}) along ${dirStr} at ${ptStr}`;
+        label = `${m === 0 ? `${n}-fold rotation + axial lattice translation` : `${n}_${m} Screw`} (${info.angle_deg.toFixed(0)}° + ${wParStr}) along ${dirStr} at ${ptStr}`;
         stage1Desc = `Stage 1 (Rotate): Rotate ${info.angle_deg.toFixed(0)}° around screw axis ${dirStr} at ${ptStr}`;
         stage2Desc = `Stage 2 (Slide): Translate by ${wParStr} along the screw axis`;
         color = "#10b981";
@@ -2013,17 +2015,18 @@
   function findOperationsBetweenAtoms(crystalData, atomA, atomB) {
     if (atomA.element !== atomB.element) return [];
     const A = crystalData.cell_matrix_cols, matched = [];
+    const tol = crystalData.symprec || 0.02;
     for (const op of crystalData.operations) {
+      if (op.preserved === false) continue;
       const wNeeded = vecSub(atomB.frac, matVec(op.W, atomA.frac));
-      const diffL = vecSub(wNeeded, op.w_raw);
-      if (vecNorm(vecSub(diffL, diffL.map(Math.round))) < 1e-2) {
-        const exactInfo = analyzeSingleRep(op.W, wNeeded, A, vecScale(vecAdd(atomA.frac, atomB.frac), 0.5));
-        matched.push(Object.assign({}, op, {
-          w: wNeeded, xyz_centered: formatXyzOperator(op.W, wNeeded), t_cart: matVec(A, wNeeded),
-          point_frac: exactInfo.point_frac, point_cart: exactInfo.point_cart,
-          axis_frac: exactInfo.axis_frac, axis_cart: exactInfo.axis_cart,
-          w_parallel_frac: exactInfo.w_parallel_frac, t_parallel_cart: exactInfo.t_parallel_cart,
-        }));
+      const latticeShift = vecSub(wNeeded, op.w_raw).map(Math.round);
+      const wExact = vecAdd(op.w_raw, latticeShift);
+      if (vecNorm(matVec(A, vecSub(wNeeded, wExact))) <= tol) {
+        // Keep this exact lattice representative: it must map the selected periodic images.
+        const exact = classifySymmetryOperation(op.index, op.W, wExact, A, {
+          preserveRepresentative: true, targetFrac: vecScale(vecAdd(atomA.frac, atomB.frac), 0.5),
+        });
+        matched.push({ ...op, ...exact });
       }
     }
     return matched;
@@ -2087,16 +2090,17 @@
     const seenW = new Set(), siteOps = [];
     for (const op of crystalData.operations) {
       if (op.preserved === false) continue;
-      const wSite = vecSub(atom.frac, matVec(op.W, atom.frac));
-      const diffL = vecSub(wSite, op.w_raw);
-      if (vecNorm(vecSub(diffL, diffL.map(Math.round))) < 1e-2) {
+      const wNeeded = vecSub(atom.frac, matVec(op.W, atom.frac));
+      const wSite = vecAdd(op.w_raw, vecSub(wNeeded, op.w_raw).map(Math.round));
+      if (vecNorm(matVec(A, vecSub(wNeeded, wSite))) <= (crystalData.symprec || 0.02)) {
         const wKey = op.W.flat().join(",");
         if (seenW.has(wKey)) continue;
         seenW.add(wKey);
         const exactInfo = analyzeSingleRep(op.W, wSite, A, atom.frac);
         const R = matMul(matMul(A, op.W), Ainv), tCart = matVec(A, wSite);
         const ptStr = `(${formatFraction(atom.frac[0])}, ${formatFraction(atom.frac[1])}, ${formatFraction(atom.frac[2])})`;
-        const dirIndices = simplifyDirection(exactInfo.axis_frac);
+        let dirIndices = simplifyDirection(exactInfo.axis_frac);
+        if (vecDot(matVec(A, dirIndices), exactInfo.axis_cart) < 0) dirIndices = dirIndices.map(x => -x);
         const dirStr = `[${dirIndices[0]} ${dirIndices[1]} ${dirIndices[2]}]`;
         const det = Math.round(matDet(op.W)), tr = Math.round(matTrace(op.W));
         let opType = op.type, symbol = op.symbol, label = op.label, stage1Desc = op.stage1_desc, stage2Desc = op.stage2_desc, color = op.color;
@@ -2128,7 +2132,7 @@
           index: op.index, type: opType, category: `Site ${symbol}`, symbol, label,
           xyz: op.xyz, xyz_centered: formatXyzOperator(op.W, wSite), W: op.W, w_raw: op.w_raw, w: wSite,
           R, t_cart: tCart, det, trace: tr, order: exactInfo.order, angle_deg: exactInfo.angle_deg,
-          point_frac: [...atom.frac], point_cart: [...atom.cart],
+          point_frac: exactInfo.point_frac, point_cart: exactInfo.point_cart,
           axis_frac: exactInfo.axis_frac, axis_cart: exactInfo.axis_cart,
           direction_indices: dirIndices, w_parallel_frac: [0, 0, 0], t_parallel_cart: [0, 0, 0],
           stage1_desc: stage1Desc, stage2_desc: stage2Desc, color, is_site_op: true, site_atom: atom,
@@ -2151,6 +2155,24 @@
       }
     }
     return { atom, pointGroup: pgInfo, operations: siteOps, neighbors };
+  }
+
+  function findSiteNeighborPairs(siteSym, op, tolerance = 0.02) {
+    const pairs = [];
+    for (const a of siteSym.neighbors) {
+      const target = evaluateAnimationStep(a.cart, op, 1).posFinal;
+      let bestB = null, mismatch = tolerance;
+      for (const b of siteSym.neighbors) {
+        if (a.element !== b.element) continue;
+        const d = vecNorm(vecSub(target, b.cart));
+        if (d <= mismatch) { bestB = b; mismatch = d; }
+      }
+      if (bestB) {
+        const moveDist = vecNorm(vecSub(a.cart, bestB.cart));
+        pairs.push({ atomA: a, atomB: bestB, moves: moveDist > 0.05, moveDist, mismatchAngstrom: mismatch });
+      }
+    }
+    return pairs.sort((a, b) => Number(b.moves) - Number(a.moves) || a.atomA.id - b.atomA.id);
   }
 
   function getWyckoffOrbitsSummary(crystalData) {
@@ -2635,7 +2657,7 @@
     matVec, matMul, matInv, matDet, rodriguesRotationMatrix, formatFraction, formatXyzOperator,
     analyzeSingleRep, chooseBestLatticeShift, classifySymmetryOperation, detectSymmetryOperations, validatedAtomMapping,
     buildCrystalDataset, parsePOSCAR, parseCIF, findInCellAtomPairs, findOperationsBetweenAtoms,
-    identifyPointGroupSymbol, getAtomSiteSymmetry, getWyckoffOrbitsSummary, evaluateAnimationStep,
+    identifyPointGroupSymbol, getAtomSiteSymmetry, getWyckoffOrbitsSummary, findSiteNeighborPairs, evaluateAnimationStep,
     identifyCrystalSystemAndProperties, IRREP_ORDER_PARAMETER_PRESETS, applyOrderParameterAndStrain,
     JAHN_TENSOR_PRESETS, parseJahnSymbol, computeJahnTensorFormat,
   };
@@ -3017,7 +3039,9 @@
 
     selectOperation(op, autoPlay = true, forcedPair = null) {
       this.currentOp = op;
-      this.inCellPairs = C.findInCellAtomPairs(this.crystalData, op);
+      this.inCellPairs = op.is_site_op && this.activeSiteSym
+        ? C.findSiteNeighborPairs(this.activeSiteSym, op, this.crystalData.symprec || 0.02)
+        : C.findInCellAtomPairs(this.crystalData, op);
       this.selectedPairIndex = 0;
 
       if (forcedPair) {
@@ -3416,16 +3440,15 @@
 
       if (op.is_site_op && this.activeSiteSym && this.activeSiteSym.neighbors.length > 0) {
         const nbs = this.activeSiteSym.neighbors;
-        let featuredIdx = this.selectedPairIndex % nbs.length;
-        for (let k = 0; k < nbs.length; k++) {
-          const candIdx = (this.selectedPairIndex + k) % nbs.length;
-          const stepTest = C.evaluateAnimationStep(nbs[candIdx].cart, op, 1.0, "two-stage");
-          if (C.vecNorm(C.vecSub(stepTest.posFinal, nbs[candIdx].cart)) > 0.05) { featuredIdx = candIdx; break; }
-        }
-        if (this.settings.animScope === "pair") {
-          sourceAtoms = [{ atom: nbs[featuredIdx], targetAtom: null, featured: true }];
+        const pair = this.inCellPairs[this.selectedPairIndex % Math.max(1, this.inCellPairs.length)];
+        if (this.settings.animScope === "pair" && pair) {
+          sourceAtoms = [{ atom: pair.atomA, targetAtom: pair.atomB, featured: true }];
         } else {
-          sourceAtoms = nbs.map((nb, idx) => ({ atom: nb, targetAtom: null, featured: idx === featuredIdx }));
+          sourceAtoms = nbs.map((nb, idx) => ({
+            atom: nb,
+            targetAtom: this.inCellPairs.find(p => p.atomA === nb)?.atomB || null,
+            featured: pair ? nb === pair.atomA : idx === 0,
+          }));
         }
       } else if (this.settings.animScope === "pair") {
         if (this.inCellPairs.length > 0) {
@@ -3889,7 +3912,9 @@
           const fStr = a.frac.map(x => C.formatFraction(x)).join(", ");
           msgEl.style.display = "block";
           msgEl.style.color = "#34d399";
-          msgEl.innerHTML = `<strong>Site ${a.element}#${a.id + 1} (Orbit ${a.wyckoff})</strong> at (${fStr})<br/>Site Point Group: <strong>${siteSym.pointGroup.label}</strong> (${siteSym.operations.length} site operations, ${siteSym.neighbors.length} coordination neighbors)`;
+          msgEl.innerHTML = `<strong>Site ${a.element}#${a.id + 1} (Orbit ${a.wyckoff})</strong> at (${fStr})<br/>Site Point Group: <strong>${siteSym.pointGroup.label}</strong> (${siteSym.operations.length} site operations, ${siteSym.neighbors.length} coordination neighbors)<br/>${siteSym.operations.length === 1
+            ? "Only identity fixes this site: no nontrivial rotation symmetry of its crystal environment."
+            : "The center stays fixed while surrounding atoms exchange equivalent sites. A stationary atom alone does not establish symmetry."}`;
           document.getElementById("sel-jahn-scope").value = "site";
           renderFilterChips(viz.crystalData);
           applyFilterAndRenderList();
@@ -4242,6 +4267,12 @@
       }
 
       function updateOperationInspector(op) {
+        const compound = ["screw", "glide", "rotoinversion"].includes(op.type);
+        const simultaneous = viz.settings.animStyle === "simultaneous";
+        document.getElementById("insp-stage1-timing").textContent = !compound ? "Motion (0% → 100%)"
+          : simultaneous ? "First component (0% → 100%)" : "Stage 1 (0% → 50%)";
+        document.getElementById("insp-stage2-timing").textContent = !compound ? "Result"
+          : simultaneous ? "Second component (0% → 100%)" : "Stage 2 (50% → 100%)";
         const badge = document.getElementById("insp-badge");
         badge.textContent = op.symbol;
         badge.style.background = op.color;
@@ -4290,11 +4321,17 @@
 
       function updatePairPath(op, pair) {
         const el = document.getElementById("insp-path");
-        if (!op || !pair) { el.textContent = ""; return; }
+        if (!op) { el.textContent = ""; return; }
+        const siteNote = op.is_site_op
+          ? `Site symmetry fixes ${op.site_atom.element}#${op.site_atom.id + 1} and must map surrounding atoms to same-element sites throughout the crystal. This is not the atom spinning. `
+          : "";
+        if (!pair) { el.textContent = siteNote + (op.is_site_op ? "No matching neighbor pair is available to illustrate this operation." : ""); return; }
         const Ainv = C.matInv(viz.crystalData.cell_matrix_cols);
         const step = C.evaluateAnimationStep(pair.atomA.cart, op, 1, "two-stage");
         const fmt = cart => `(${C.matVec(Ainv, cart).map(x => C.formatFraction(x)).join(", ")})`;
-        el.textContent = `Fractional path: A ${fmt(pair.atomA.cart)} → Stage 1 ${fmt(step.posStage1End)} → B ${fmt(step.posFinal)}.` +
+        const fixedNote = !op.is_site_op && op.type !== "identity" && C.vecNorm(C.vecSub(step.posFinal, pair.atomA.cart)) < 0.02
+          ? "This atom stays fixed. That alone is not proof of crystal symmetry; use Site Symmetry to inspect the surrounding atoms. " : "";
+        el.textContent = siteNote + fixedNote + `${op.is_site_op ? "Neighbor" : "Fractional"} path: A ${fmt(pair.atomA.cart)} → Stage 1 ${fmt(step.posStage1End)} → B ${fmt(step.posFinal)}.` +
           (op.metric_error >= 1e-6 ? " The rigid parent operation is shown; xyz and r₀ use the parent cell." : "") +
           (op.type === "screw" ? " Rotation is about the displayed axis through r₀; a 180° turn reaches the opposite cell corner only when that axis passes through the center of that face." : "");
       }
@@ -4304,11 +4341,11 @@
         const op = viz.currentOp;
         updatePairPath(op, pair);
         if (!total || !pair) {
-          lbl.textContent = "No in-cell pair";
+          lbl.textContent = op && op.is_site_op ? "No matching neighbor pair" : "No in-cell pair";
           updateHudLegendBar(op, null);
           return;
         }
-        lbl.textContent = `Pair ${idx + 1}/${total}: ${pair.atomA.element}#${pair.atomA.id + 1} → ${pair.atomB.element}#${pair.atomB.id + 1}`;
+        lbl.textContent = `${op && op.is_site_op ? "Neighbor pair" : "Pair"} ${idx + 1}/${total}: ${pair.atomA.element}#${pair.atomA.id + 1} → ${pair.atomB.element}#${pair.atomB.id + 1}`;
         updateHudLegendBar(op, pair);
       }
 
@@ -4338,7 +4375,10 @@
         const s1Label = op.type === "glide" || op.type === "mirror"
           ? "Reflected across plane"
           : op.angle_deg > 0 ? `${op.angle_deg.toFixed(0)}° Rotated` : "Identity";
-        pStage1.innerHTML = `<strong style="color:#7dd3fc;">[1] Stage 1 (50%):</strong> ${s1Label}`;
+        const compound = ["screw", "glide", "rotoinversion"].includes(op.type);
+        const milestone = !compound ? "Motion endpoint (100%)"
+          : viz.settings.animStyle === "simultaneous" ? "First-component milestone" : "Stage 1 (50%)";
+        pStage1.innerHTML = `<strong style="color:#7dd3fc;">[1] ${milestone}:</strong> ${s1Label}`;
 
         const pt = op.point_frac.map(x => C.formatFraction(x)).join(",");
         const wp = op.w_parallel_frac;
@@ -4582,6 +4622,10 @@
 
       document.getElementById("sel-anim-style").addEventListener("change", e => {
         viz.updateSettings({ animStyle: e.target.value });
+        if (viz.currentOp) {
+          updateOperationInspector(viz.currentOp);
+          updatePairCounter(viz.selectedPairIndex, viz.inCellPairs.length, viz.inCellPairs[viz.selectedPairIndex]);
+        }
       });
 
       document.getElementById("chk-chiral-motif").addEventListener("change", e => {
