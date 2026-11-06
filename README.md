@@ -121,3 +121,19 @@ A 180° rotation about an offset screw axis can take a corner to an edge midpoin
 For metric-breaking strain, the animation applies the original rigid parent operation in the laboratory frame. The operation triplet and anchor then refer to the parent cell; path coordinates refer to the current cell. A displayed mismatch is a Cartesian distance in Å.
 
 See [SYMMETRY_AUDIT.md](SYMMETRY_AUDIT.md) for the fixes and remaining scientific limitations.
+
+
+### What a site rotation means
+
+An axis through an atom does not mean the atom physically spins. A site-symmetry operation fixes that atom **and maps the entire periodic crystal onto equivalent same-element sites**. A stationary central sphere alone is insufficient evidence.
+
+In quartz, each Si site has point group `2`: a 180° rotation leaves the Si fixed and exchanges the four nearby O atoms in two pairs. A 90° rotation also fixes the central point, but fails to reproduce the oxygen environment. Quartz O sites have point group `1`, so they have no nontrivial site rotation. In Site Symmetry mode, the animation and inspector use the same actual neighbor pair. The colored reference motif is an artificial orientation marker, not a physical atom or atomic spin.
+
+For an optional independent reference check, install Python's `spglib` package and run:
+
+```bash
+python -m pip install spglib
+python tests/reference-spglib.py
+```
+
+This compares every preset space-group number, every operation and every atomic site point group against spglib. It is a development check, not a browser runtime dependency.

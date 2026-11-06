@@ -124,3 +124,66 @@ test('known tensor dimensions for ZnS, diamond and quartz', () => {
     ['V','[V2]','V[V2]','[[V2]2]'].forEach((sym,i)=>assert.equal(C.computeJahnTensorFormat(presets[key].operations,sym).independentCount,counts[i],key+' '+sym));
   }
 });
+
+test('quartz twofold fixes Si and exchanges its four O neighbors in two pairs', () => {
+  const d=presets.quartz_152;
+  for(const atom of d.atoms.filter(a=>a.element==='Si')) {
+    const site=C.getAtomSiteSymmetry(d,atom), op=site.operations.find(o=>o.type==='rotation');
+    assert.equal(site.pointGroup.hm,'2'); assert.equal(site.neighbors.length,4);
+    assert.equal(op.order,2);
+    close(C.evaluateAnimationStep(atom.cart,op,1).posCurrent,atom.cart,'Si center fixed');
+    const pairs=C.findSiteNeighborPairs(site,op,d.symprec);
+    assert.equal(pairs.length,4); assert.ok(pairs.every(p=>p.moves&&p.atomA.element==='O'&&p.atomB.element==='O'));
+    for(const pair of pairs) {
+      close(C.evaluateAnimationStep(pair.atomA.cart,op,1).posFinal,pair.atomB.cart,'oxygen neighbor exchanged');
+      close(C.evaluateAnimationStep(pair.atomB.cart,op,1).posFinal,pair.atomA.cart,'twofold swaps back');
+    }
+    // A quarter-turn keeps the center fixed too, but fails to reproduce the shell.
+    const quarter=C.findSiteNeighborPairs(site,{...op,angle_deg:90},d.symprec);
+    assert.ok(quarter.length<4,'stationary center alone must not imply fourfold symmetry');
+  }
+});
+
+test('quartz oxygen sites have identity only; not every atom has a twofold site axis', () => {
+  for(const a of presets.quartz_152.atoms.filter(a=>a.element==='O')) {
+    const site=C.getAtomSiteSymmetry(presets.quartz_152,a);
+    assert.equal(site.pointGroup.hm,'1'); assert.equal(site.operations.length,1);
+    assert.equal(site.operations[0].type,'identity');
+  }
+});
+
+test('site membership uses the selected Cartesian tolerance in a large cell', () => {
+  const d=C.buildCrystalDataset({cellRows:[[100,0,0],[0,70,0],[0,0,60]],rawAtoms:[
+    {element:'C',frac:[.002,.003,.2]},{element:'C',frac:[.998,.997,.2]},
+  ],symprec:.005});
+  const W=[[-1,0,0],[0,-1,0],[0,0,1]];
+  assert.ok(d.operations.some(o=>JSON.stringify(o.W)===JSON.stringify(W)), 'twofold exchanges the two atoms');
+  const site=C.getAtomSiteSymmetry(d,d.atoms[0]);
+  assert.ok(!site.operations.some(o=>JSON.stringify(o.W)===JSON.stringify(W)), 'exchanging atoms is not site symmetry fixing one atom');
+});
+
+test('pair finder maps exact periodic images and reclassifies translated representatives', () => {
+  for(const [key,d] of Object.entries(presets)) {
+    const atoms=d.packed_atoms.slice(0,20);
+    for(const a of atoms) for(const b of atoms) for(const op of C.findOperationsBetweenAtoms(d,a,b)) {
+      const end=C.evaluateAnimationStep(a.cart,op,1).posFinal;
+      assert.ok(C.vecNorm(C.vecSub(end,b.cart))<=d.symprec+2e-5,key+' pair endpoint');
+      if(op.type==='identity') assert.ok(C.vecNorm(op.t_cart)<1e-8);
+      if(op.type==='screw') assert.ok(C.vecNorm(op.t_parallel_cart)>1e-8);
+      if(op.type==='glide') assert.ok(C.vecNorm(op.t_parallel_cart)>1e-8);
+      assert.ok(!op.symbol.endsWith('_0'),'whole axial lattice shift is not a 2_0/3_0 screw');
+    }
+  }
+  const d=presets.zns_216,a=d.atoms[0], b=d.packed_atoms.find(b=>b.element===a.element&&b.frac[0]===0&&b.frac[1]===0&&b.frac[2]===1);
+  const translation=C.findOperationsBetweenAtoms(d,a,b).find(o=>o.type==='translation');
+  assert.ok(translation); assert.match(translation.label,/Lattice Translation/);
+  close(translation.w,[0,0,1]);
+});
+
+test('pair finder respects atomic tolerance and excludes broken parent operations', () => {
+  const d=presets.zns_216;
+  const offset={...d.atoms[0],frac:[.005,0,0],cart:C.matVec(d.cell_matrix_cols,[.005,0,0])};
+  assert.equal(C.findOperationsBetweenAtoms({...d,symprec:.005},d.atoms[0],offset).length,0);
+  const strained=C.applyOrderParameterAndStrain(d,{ezz:.08});
+  for(const op of C.findOperationsBetweenAtoms(strained,strained.atoms[0],strained.atoms[1])) assert.notEqual(op.preserved,false);
+});
